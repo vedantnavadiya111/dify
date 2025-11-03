@@ -1377,6 +1377,11 @@ class MessageAnnotation(Base):
     updated_at: Mapped[datetime] = mapped_column(sa.DateTime, nullable=False, server_default=func.current_timestamp())
 
     @property
+    def question_text(self) -> str:
+        """Return a non-null question string, falling back to the answer content."""
+        return self.question or self.content
+
+    @property
     def account(self):
         account = db.session.query(Account).where(Account.id == self.account_id).first()
         return account
