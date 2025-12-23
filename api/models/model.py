@@ -111,7 +111,11 @@ class App(Base):
         else:
             app_model_config = self.app_model_config
             if app_model_config:
-                return app_model_config.pre_prompt
+                pre_prompt = app_model_config.pre_prompt or ""
+                # Truncate to 200 characters with ellipsis if using prompt as description
+                if len(pre_prompt) > 200:
+                    return pre_prompt[:200] + "..."
+                return pre_prompt
             else:
                 return ""
 
@@ -259,7 +263,7 @@ class App(Base):
                 provider_id = tool.get("provider_id", "")
 
                 if provider_type == ToolProviderType.API:
-                    if uuid.UUID(provider_id) not in existing_api_providers:
+                    if provider_id not in existing_api_providers:
                         deleted_tools.append(
                             {
                                 "type": ToolProviderType.API,
@@ -572,7 +576,9 @@ class InstalledApp(TypeBase):
         sa.UniqueConstraint("tenant_id", "app_id", name="unique_tenant_app"),
     )
 
-    id: Mapped[str] = mapped_column(StringUUID, default=lambda: str(uuid4()), init=False)
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
     tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     app_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     app_owner_tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
@@ -606,7 +612,9 @@ class OAuthProviderApp(TypeBase):
         sa.Index("oauth_provider_app_client_id_idx", "client_id"),
     )
 
-    id: Mapped[str] = mapped_column(StringUUID, default=lambda: str(uuidv7()), init=False)
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuidv7()), default_factory=lambda: str(uuidv7()), init=False
+    )
     app_icon: Mapped[str] = mapped_column(String(255), nullable=False)
     client_id: Mapped[str] = mapped_column(String(255), nullable=False)
     client_secret: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -831,7 +839,29 @@ class Conversation(Base):
 
     @property
     def status_count(self):
-        messages = db.session.scalars(select(Message).where(Message.conversation_id == self.id)).all()
+        from models.workflow import WorkflowRun
+
+        # Get all messages with workflow_run_id for this conversation
+        messages = db.session.scalars(
+            select(Message).where(Message.conversation_id == self.id, Message.workflow_run_id.isnot(None))
+        ).all()
+
+        if not messages:
+            return None
+
+        # Batch load all workflow runs in a single query, filtered by this conversation's app_id
+        workflow_run_ids = [msg.workflow_run_id for msg in messages if msg.workflow_run_id]
+        workflow_runs = {}
+
+        if workflow_run_ids:
+            workflow_runs_query = db.session.scalars(
+                select(WorkflowRun).where(
+                    WorkflowRun.id.in_(workflow_run_ids),
+                    WorkflowRun.app_id == self.app_id,  # Filter by this conversation's app_id
+                )
+            ).all()
+            workflow_runs = {run.id: run for run in workflow_runs_query}
+
         status_counts = {
             WorkflowExecutionStatus.RUNNING: 0,
             WorkflowExecutionStatus.SUCCEEDED: 0,
@@ -841,18 +871,24 @@ class Conversation(Base):
         }
 
         for message in messages:
-            if message.workflow_run:
-                status_counts[WorkflowExecutionStatus(message.workflow_run.status)] += 1
+            # Guard against None to satisfy type checker and avoid invalid dict lookups
+            if message.workflow_run_id is None:
+                continue
+            workflow_run = workflow_runs.get(message.workflow_run_id)
+            if not workflow_run:
+                continue
 
-        return (
-            {
-                "success": status_counts[WorkflowExecutionStatus.SUCCEEDED],
-                "failed": status_counts[WorkflowExecutionStatus.FAILED],
-                "partial_success": status_counts[WorkflowExecutionStatus.PARTIAL_SUCCEEDED],
-            }
-            if messages
-            else None
-        )
+            try:
+                status_counts[WorkflowExecutionStatus(workflow_run.status)] += 1
+            except (ValueError, KeyError):
+                # Handle invalid status values gracefully
+                pass
+
+        return {
+            "success": status_counts[WorkflowExecutionStatus.SUCCEEDED],
+            "failed": status_counts[WorkflowExecutionStatus.FAILED],
+            "partial_success": status_counts[WorkflowExecutionStatus.PARTIAL_SUCCEEDED],
+        }
 
     @property
     def first_message(self):
@@ -1303,7 +1339,9 @@ class MessageFeedback(TypeBase):
         sa.Index("message_feedback_conversation_idx", "conversation_id", "from_source", "rating"),
     )
 
-    id: Mapped[str] = mapped_column(StringUUID, default=lambda: str(uuid4()), init=False)
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
     app_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     conversation_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     message_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
@@ -1352,7 +1390,9 @@ class MessageFile(TypeBase):
         sa.Index("message_file_created_by_idx", "created_by"),
     )
 
-    id: Mapped[str] = mapped_column(StringUUID, default=lambda: str(uuid4()), init=False)
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
     message_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     type: Mapped[str] = mapped_column(String(255), nullable=False)
     transfer_method: Mapped[FileTransferMethod] = mapped_column(String(255), nullable=False)
@@ -1444,7 +1484,9 @@ class AppAnnotationSetting(TypeBase):
         sa.Index("app_annotation_settings_app_idx", "app_id"),
     )
 
-    id: Mapped[str] = mapped_column(StringUUID, default=lambda: str(uuid4()), init=False)
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
     app_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     score_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default=sa.text("0"))
     collection_binding_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
@@ -1480,7 +1522,9 @@ class OperationLog(TypeBase):
         sa.Index("operation_log_account_action_idx", "tenant_id", "account_id", "action"),
     )
 
-    id: Mapped[str] = mapped_column(StringUUID, default=lambda: str(uuid4()), init=False)
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
     tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     account_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     action: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -1546,7 +1590,9 @@ class AppMCPServer(TypeBase):
         sa.UniqueConstraint("tenant_id", "app_id", name="unique_app_mcp_server_tenant_app_id"),
         sa.UniqueConstraint("server_code", name="unique_app_mcp_server_server_code"),
     )
-    id: Mapped[str] = mapped_column(StringUUID, default=lambda: str(uuid4()), init=False)
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
     tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     app_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -1756,7 +1802,9 @@ class ApiRequest(TypeBase):
         sa.Index("api_request_token_idx", "tenant_id", "api_token_id"),
     )
 
-    id: Mapped[str] = mapped_column(StringUUID, default=lambda: str(uuid4()), init=False)
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
     tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     api_token_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     path: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -1775,7 +1823,9 @@ class MessageChain(TypeBase):
         sa.Index("message_chain_message_id_idx", "message_id"),
     )
 
-    id: Mapped[str] = mapped_column(StringUUID, default=lambda: str(uuid4()), init=False)
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
     message_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     type: Mapped[str] = mapped_column(String(255), nullable=False)
     input: Mapped[str | None] = mapped_column(LongText, nullable=True)
@@ -1906,7 +1956,9 @@ class DatasetRetrieverResource(TypeBase):
         sa.Index("dataset_retriever_resource_message_id_idx", "message_id"),
     )
 
-    id: Mapped[str] = mapped_column(StringUUID, default=lambda: str(uuid4()), init=False)
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
     message_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     position: Mapped[int] = mapped_column(sa.Integer, nullable=False)
     dataset_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
@@ -1938,7 +1990,9 @@ class Tag(TypeBase):
 
     TAG_TYPE_LIST = ["knowledge", "app"]
 
-    id: Mapped[str] = mapped_column(StringUUID, default=lambda: str(uuid4()), init=False)
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
     tenant_id: Mapped[str | None] = mapped_column(StringUUID, nullable=True)
     type: Mapped[str] = mapped_column(String(16), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -1956,7 +2010,9 @@ class TagBinding(TypeBase):
         sa.Index("tag_bind_tag_id_idx", "tag_id"),
     )
 
-    id: Mapped[str] = mapped_column(StringUUID, default=lambda: str(uuid4()), init=False)
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
     tenant_id: Mapped[str | None] = mapped_column(StringUUID, nullable=True)
     tag_id: Mapped[str | None] = mapped_column(StringUUID, nullable=True)
     target_id: Mapped[str | None] = mapped_column(StringUUID, nullable=True)
@@ -1973,7 +2029,9 @@ class TraceAppConfig(TypeBase):
         sa.Index("trace_app_config_app_id_idx", "app_id"),
     )
 
-    id: Mapped[str] = mapped_column(StringUUID, default=lambda: str(uuid4()), init=False)
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
     app_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     tracing_provider: Mapped[str | None] = mapped_column(String(255), nullable=True)
     tracing_config: Mapped[dict | None] = mapped_column(sa.JSON, nullable=True)

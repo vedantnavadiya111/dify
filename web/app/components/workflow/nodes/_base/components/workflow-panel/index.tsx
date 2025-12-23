@@ -44,7 +44,7 @@ import { useAllBuiltInTools } from '@/service/use-tools'
 import { useAllTriggerPlugins } from '@/service/use-triggers'
 import { FlowType } from '@/types/common'
 import { canFindTool } from '@/utils'
-import cn from '@/utils/classnames'
+import { cn } from '@/utils/classnames'
 import { ACCOUNT_SETTING_TAB } from '@/app/components/header/account-setting/constants'
 import {
   RiCloseLine,
@@ -365,6 +365,10 @@ const BasePanel: FC<BasePanelProps> = ({
     return !pluginDetail ? null : <ReadmeEntrance pluginDetail={pluginDetail as any} className='mt-auto' />
   }, [data.type, currToolCollection, currentDataSource, currentTriggerPlugin])
 
+  const selectedNode = useMemo(() => ({
+    id,
+    data,
+  }) as Node, [id, data])
   if (logParams.showSpecialResultPanel) {
     return (
       <div className={cn(
@@ -628,7 +632,7 @@ const BasePanel: FC<BasePanelProps> = ({
                   <div className='system-xs-regular mb-2 text-text-tertiary'>
                     {t('workflow.panel.addNextStep')}
                   </div>
-                  <NextStep selectedNode={{ id, data } as Node} />
+                  <NextStep selectedNode={selectedNode} />
                 </div>
               )
             }
