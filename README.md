@@ -99,7 +99,7 @@ Seamless integration with hundreds of proprietary / open-source LLMs from dozens
 ![providers-v5](https://github.com/langgenius/dify/assets/13230914/5a17bdbe-097a-4100-8363-40255b70f6e3)
 
 **3. Prompt IDE**:
-Intuitive interface for crafting prompts, comparing model performance, and adding additional features such as text-to-speech to a chat-based app.
+Intuitive interface for crafting prompts, comparing model performance, and adding additional features such as text-to-speech to a "chat-based" app.
 
 **4. RAG Pipeline**:
 Extensive RAG capabilities that cover everything from document ingestion to retrieval, with out-of-box support for text extraction from PDFs, PPTs, and other common document formats.
